@@ -2,7 +2,9 @@ extern crate byteorder;
 extern crate i2cdev;
 extern crate i2csensors;
 
+use byteorder::{ByteOrder, LittleEndian};
 use i2cdev::core::I2CDevice;
+
 use std::error::Error;
 
 pub const BNO055_DEFAULT_ADDR: u16 = 0x28;
@@ -129,14 +131,11 @@ pub struct BNO055QuaternionReading {
 
 impl BNO055QuaternionReading {
     pub fn new<E: Error>(i2cdev: &mut I2CDevice<Error = E>) -> Result<BNO055QuaternionReading, E> {
-        let w = ((i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_W_MSB)? as u16) << 8) |
-            (i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_W_LSB)? as u16);
-        let x = ((i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_X_MSB)? as u16) << 8) |
-            (i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_X_LSB)? as u16);
-        let y = ((i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_Y_MSB)? as u16) << 8) |
-            (i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_Y_LSB)? as u16);
-        let z = ((i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_Z_MSB)? as u16) << 8) |
-            (i2cdev.smbus_read_byte_data(BNO055_QUA_DATA_Z_LSB)? as u16);
+        let mut buf = i2cdev.smbus_read_i2c_block_data(BNO055_QUA_DATA_W_LSB, 8)?;
+        let w = LittleEndian::read_i16(&buf[0..2]);
+        let x = LittleEndian::read_i16(&buf[2..4]);
+        let y = LittleEndian::read_i16(&buf[4..6]);
+        let z = LittleEndian::read_i16(&buf[6..8]);
 
         let scale = (1.0 / ((1 << 14) as f32));
         Ok(BNO055QuaternionReading {
@@ -159,6 +158,7 @@ where
 {
     pub fn new(mut i2cdev: T) -> Result<Self, T::Error> {
         println!("{}", i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?);
+        i2cdev.smbus_write_byte_data(BNO055_OPR_MODE, 0b00001100);
         Ok(BNO055 { i2cdev: i2cdev })
     }
 }
