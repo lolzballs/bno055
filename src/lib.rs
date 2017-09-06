@@ -137,7 +137,7 @@ impl BNO055QuaternionReading {
         let y = LittleEndian::read_i16(&buf[4..6]);
         let z = LittleEndian::read_i16(&buf[6..8]);
 
-        let scale = (1.0 / ((1 << 14) as f32));
+        let scale = 1.0 / ((1 << 14) as f32);
         Ok(BNO055QuaternionReading {
             w: w as f32 * scale,
             x: x as f32 * scale,
@@ -147,9 +147,28 @@ impl BNO055QuaternionReading {
     }
 }
 
+#[derive(Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum BNO055OperationMode {
+    ConfigMode = 0b0000,
+    AccOnly = 0b0001,
+    MagOnly = 0b0010,
+    GyroOnly = 0b0011,
+    AccMag = 0b0100,
+    AccGyro = 0b0101,
+    MagGyro = 0b0110,
+    AMG = 0b0111,
+    IMU = 0b1000,
+    Compass = 0b1001,
+    M4G = 0b1010,
+    NdofFmcOff = 0b1011,
+    Ndof = 0b1100,
+}
+
 #[derive(Copy, Clone)]
 pub struct BNO055<T: I2CDevice + Sized> {
     pub i2cdev: T,
+    pub mode: BNO055OperationMode,
 }
 
 impl<T> BNO055<T>
@@ -157,9 +176,32 @@ where
     T: I2CDevice + Sized,
 {
     pub fn new(mut i2cdev: T) -> Result<Self, T::Error> {
-        println!("{}", i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?);
-        i2cdev.smbus_write_byte_data(BNO055_OPR_MODE, 0b00001100);
-        Ok(BNO055 { i2cdev: i2cdev })
+        let chip_id = i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?;
+        println!("{}", chip_id);
+        if chip_id == BNO055_ID {
+            Ok(BNO055 {
+                i2cdev: i2cdev,
+                mode: BNO055OperationMode::ConfigMode,
+            })
+        } else {
+            // TODO: Do correct error handling
+            panic!("BNO055_CHIP_ID was not valid!");
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: BNO055OperationMode) -> Result<(), T::Error> {
+        if self.mode != mode {
+            self.i2cdev.smbus_write_byte_data(
+                BNO055_OPR_MODE,
+                mode as u8,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
+        // TODO: Check modes
+        BNO055QuaternionReading::new(&mut self.i2cdev)
     }
 }
 
