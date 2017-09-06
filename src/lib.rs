@@ -8,6 +8,7 @@ use i2cdev::core::I2CDevice;
 use std::error::Error;
 use std::thread;
 use std::time::Duration;
+use std::mem;
 
 pub const BNO055_DEFAULT_ADDR: u16 = 0x28;
 pub const BNO055_ALTERNATE_ADDR: u16 = 0x29;
@@ -123,6 +124,42 @@ pub const BNO055_ACC_RADIUS_MSB: u8 = 0x68;
 pub const BNO055_MAG_RADIUS_LSB: u8 = 0x69;
 pub const BNO055_MAG_RADIUS_MSB: u8 = 0x6A;
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum BNO055SystemStatusCode {
+    SystemIdle = 0,
+    SystemError = 1,
+    InitPeripherals = 2,
+    SystemInit = 3,
+    Executing = 4,
+    Running = 5,
+    RunningWithoutFusion = 6,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum BNO055SystemErrorCode {
+    None = 0,
+    PeripheralInit = 1,
+    SystemInit = 2,
+    SelfTest = 3,
+    RegisterMapValue = 4,
+    RegisterMapAddress = 5,
+    RegisterMapWrite = 6,
+    LowPowerModeNotAvail = 7,
+    AccelPowerModeNotAvail = 8,
+    FusionAlgoConfig = 9,
+    SensorConfig = 10,
+}
+
+#[derive(Debug)]
+pub struct BNO055SystemStatus {
+    status: BNO055SystemStatusCode,
+    // TODO: bitflagify this
+    selftest: Option<u8>,
+    error: BNO055SystemErrorCode,
+}
+
 #[derive(Debug)]
 pub struct BNO055Revision {
     pub software: u16,
@@ -173,6 +210,21 @@ impl BNO055QuaternionReading {
 
 #[derive(Copy, Clone, PartialEq)]
 #[repr(u8)]
+pub enum BNO055RegisterPage {
+    Page0 = 0,
+    Page1 = 1,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum BNO055PowerMode {
+    Normal = 0b00,
+    LowPower = 0b01,
+    Suspend = 0b10,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+#[repr(u8)]
 pub enum BNO055OperationMode {
     ConfigMode = 0b0000,
     AccOnly = 0b0001,
@@ -201,16 +253,26 @@ where
 {
     pub fn new(mut i2cdev: T) -> Result<Self, T::Error> {
         let chip_id = i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?;
-        println!("{}", chip_id);
-        if chip_id == BNO055_ID {
-            Ok(BNO055 {
-                i2cdev: i2cdev,
-                mode: BNO055OperationMode::ConfigMode,
-            })
-        } else {
+        if chip_id != BNO055_ID {
             // TODO: Do correct error handling
             panic!("BNO055_CHIP_ID was not valid!");
         }
+
+        let mut bno = BNO055 {
+            i2cdev: i2cdev,
+            mode: BNO055OperationMode::ConfigMode,
+        };
+        bno.set_mode(BNO055OperationMode::ConfigMode)?;
+        bno.set_page(BNO055RegisterPage::Page0)?;
+        bno.reset()?;
+        bno.set_power_mode(BNO055PowerMode::Normal)?;
+        bno.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x0)?;
+
+        Ok(bno)
+    }
+
+    pub fn reset(&mut self) -> Result<(), T::Error> {
+        Ok(self.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x20)?)
     }
 
     pub fn set_mode(&mut self, mode: BNO055OperationMode) -> Result<(), T::Error> {
@@ -226,6 +288,33 @@ where
         Ok(())
     }
 
+    pub fn set_external_crystal(&mut self, ext: bool) -> Result<(), T::Error> {
+        let prev = self.mode;
+        self.set_mode(BNO055OperationMode::ConfigMode)?;
+        self.i2cdev.smbus_write_byte_data(
+            BNO055_SYS_TRIGGER,
+            if ext { 0x80 } else { 0x00 },
+        )?;
+        self.set_mode(prev)?;
+        Ok(())
+    }
+
+    pub fn set_power_mode(&mut self, mode: BNO055PowerMode) -> Result<(), T::Error> {
+        self.i2cdev.smbus_write_byte_data(
+            BNO055_PWR_MODE,
+            mode as u8,
+        )?;
+        Ok(())
+    }
+
+    pub fn set_page(&mut self, page: BNO055RegisterPage) -> Result<(), T::Error> {
+        self.i2cdev.smbus_write_byte_data(
+            BNO055_PAGE_ID,
+            page as u8,
+        )?;
+        Ok(())
+    }
+
     pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
         // TODO: Check modes
         BNO055QuaternionReading::new(&mut self.i2cdev)
@@ -234,6 +323,33 @@ where
     pub fn get_revision(&mut self) -> Result<BNO055Revision, T::Error> {
         // TODO: Check page
         BNO055Revision::new(&mut self.i2cdev)
+    }
+
+    pub fn get_system_status(&mut self, run: bool) -> Result<BNO055SystemStatus, T::Error> {
+        let selftest = if run {
+            let prev = self.mode;
+            self.set_mode(BNO055OperationMode::ConfigMode)?;
+
+            let sys_trigger = self.i2cdev.smbus_read_byte_data(BNO055_SYS_TRIGGER)?;
+            self.i2cdev.smbus_write_byte_data(
+                BNO055_SYS_TRIGGER,
+                sys_trigger | 0x1,
+            )?;
+
+            thread::sleep(Duration::from_secs(1));
+
+            let result = self.i2cdev.smbus_read_byte_data(BNO055_ST_RESULT)?;
+            self.set_mode(prev)?;
+            Some(result)
+        } else {
+            None
+        };
+
+        Ok(BNO055SystemStatus {
+            status: unsafe { mem::transmute(self.i2cdev.smbus_read_byte_data(BNO055_SYS_STATUS)?) },
+            error: unsafe { mem::transmute(self.i2cdev.smbus_read_byte_data(BNO055_SYS_ERR)?) },
+            selftest,
+        })
     }
 }
 
