@@ -5,8 +5,9 @@ extern crate i2csensors;
 use i2cdev::core::I2CDevice;
 use std::error::Error;
 
-pub const BNO055_DEFAULT_ADDR: u16 = 0x29;
-pub const BNO055_ALTERNATE_ADDR: u16 = 0x28;
+pub const BNO055_DEFAULT_ADDR: u16 = 0x28;
+pub const BNO055_ALTERNATE_ADDR: u16 = 0x29;
+pub const BNO055_ID: u8 = 0xA0;
 
 pub const BNO055_PAGE_ID: u8 = 0x07;
 
@@ -118,6 +119,7 @@ pub const BNO055_ACC_RADIUS_MSB: u8 = 0x68;
 pub const BNO055_MAG_RADIUS_LSB: u8 = 0x69;
 pub const BNO055_MAG_RADIUS_MSB: u8 = 0x6A;
 
+#[derive(Debug)]
 pub struct BNO055QuaternionReading {
     w: f32,
     x: f32,
@@ -156,6 +158,7 @@ where
     T: I2CDevice + Sized,
 {
     pub fn new(mut i2cdev: T) -> Result<Self, T::Error> {
+        println!("{}", i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?);
         Ok(BNO055 { i2cdev: i2cdev })
     }
 }
