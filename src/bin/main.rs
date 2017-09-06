@@ -23,6 +23,7 @@ fn main() {
     match get_linux_bno055_i2c_device() {
         Ok(device) => {
             let mut bno = BNO055::new(device).unwrap();
+            println!("{:?}", bno.get_revision().unwrap());
             bno.set_mode(BNO055OperationMode::Ndof).unwrap();
             loop {
                 println!("{:?}", bno.get_quaternion().unwrap());

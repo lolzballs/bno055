@@ -6,6 +6,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use i2cdev::core::I2CDevice;
 
 use std::error::Error;
+use std::thread;
+use std::time::Duration;
 
 pub const BNO055_DEFAULT_ADDR: u16 = 0x28;
 pub const BNO055_ALTERNATE_ADDR: u16 = 0x29;
@@ -122,16 +124,38 @@ pub const BNO055_MAG_RADIUS_LSB: u8 = 0x69;
 pub const BNO055_MAG_RADIUS_MSB: u8 = 0x6A;
 
 #[derive(Debug)]
+pub struct BNO055Revision {
+    pub software: u16,
+    pub bootloader: u8,
+    pub accelerometer: u8,
+    pub magnetometer: u8,
+    pub gyroscope: u8,
+}
+
+impl BNO055Revision {
+    pub fn new<E: Error>(i2cdev: &mut I2CDevice<Error = E>) -> Result<BNO055Revision, E> {
+        let buf = i2cdev.smbus_read_i2c_block_data(BNO055_ACC_ID, 6)?;
+        Ok(BNO055Revision {
+            software: LittleEndian::read_u16(&buf[3..5]),
+            bootloader: buf[5],
+            accelerometer: buf[0],
+            magnetometer: buf[1],
+            gyroscope: buf[2],
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct BNO055QuaternionReading {
-    w: f32,
-    x: f32,
-    y: f32,
-    z: f32,
+    pub w: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 impl BNO055QuaternionReading {
     pub fn new<E: Error>(i2cdev: &mut I2CDevice<Error = E>) -> Result<BNO055QuaternionReading, E> {
-        let mut buf = i2cdev.smbus_read_i2c_block_data(BNO055_QUA_DATA_W_LSB, 8)?;
+        let buf = i2cdev.smbus_read_i2c_block_data(BNO055_QUA_DATA_W_LSB, 8)?;
         let w = LittleEndian::read_i16(&buf[0..2]);
         let x = LittleEndian::read_i16(&buf[2..4]);
         let y = LittleEndian::read_i16(&buf[4..6]);
@@ -195,6 +219,9 @@ where
                 BNO055_OPR_MODE,
                 mode as u8,
             )?;
+
+            // Table 3-6 says 19ms to switch to CONFIG_MODE
+            thread::sleep(Duration::from_millis(19));
         }
         Ok(())
     }
@@ -202,6 +229,11 @@ where
     pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
         // TODO: Check modes
         BNO055QuaternionReading::new(&mut self.i2cdev)
+    }
+
+    pub fn get_revision(&mut self) -> Result<BNO055Revision, T::Error> {
+        // TODO: Check page
+        BNO055Revision::new(&mut self.i2cdev)
     }
 }
 
