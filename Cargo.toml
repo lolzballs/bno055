@@ -1,5 +1,5 @@
 [package]
-name = "i2cdev-bno055"
+name = "i2cdev_bno055"
 version = "0.1.0"
 authors = ["Benjamin Cheng <ben@bcheng.cf>"]
 description = "BNO855 Absolute Orientation Sensor (Accelerometer, Gyroscope, Magnetometer)"
