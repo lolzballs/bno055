@@ -3,6 +3,12 @@ name = "i2cdev_bno055"
 version = "0.1.1"
 authors = ["Benjamin Cheng <ben@bcheng.cf>"]
 description = "BNO855 Absolute Orientation Sensor (Accelerometer, Gyroscope, Magnetometer)"
+repository = "https://github.com/lolzballs/i2cdev-bno055"
+license = "MIT/Apache-2.0"
+exclude = [
+    "src/bin/*",
+    ".cargo/config",
+]
 
 [dependencies]
 byteorder = "1"
