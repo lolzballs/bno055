@@ -248,10 +248,14 @@ where
         Ok(bno)
     }
 
+    /// Reset the BNO055, initializing the register map to default values
+    /// More in section 3.2
     pub fn reset(&mut self) -> Result<(), T::Error> {
         Ok(self.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x20)?)
     }
 
+    /// Sets the operating mode, see [BNO055OperationMode](enum.BNO055OperationMode.html)
+    /// More in section 3.3
     pub fn set_mode(&mut self, mode: BNO055OperationMode) -> Result<(), T::Error> {
         if self.mode != mode {
             self.i2cdev.smbus_write_byte_data(
@@ -276,6 +280,8 @@ where
         Ok(())
     }
 
+    /// Sets the power mode, see [BNO055PowerMode](enum.BNO055PowerMode.html)
+    /// More in section 3.2
     pub fn set_power_mode(&mut self, mode: BNO055PowerMode) -> Result<(), T::Error> {
         self.i2cdev.smbus_write_byte_data(
             BNO055_PWR_MODE,
@@ -284,6 +290,8 @@ where
         Ok(())
     }
 
+    /// Sets the register page
+    /// More in section 4.2
     pub fn set_page(&mut self, page: BNO055RegisterPage) -> Result<(), T::Error> {
         self.i2cdev.smbus_write_byte_data(
             BNO055_PAGE_ID,
@@ -292,6 +300,8 @@ where
         Ok(())
     }
 
+    /// Gets a quaternion reading from the BNO055
+    /// Must be in a valid operating mode
     pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
         let buf = self.i2cdev.smbus_read_i2c_block_data(
             BNO055_QUA_DATA_W_LSB,
@@ -311,6 +321,8 @@ where
         })
     }
 
+    /// Gets the revision of software, bootloader, accelerometer, magnetometer, and gyroscope of
+    /// the BNO055
     pub fn get_revision(&mut self) -> Result<BNO055Revision, T::Error> {
         // TODO: Check page
         let buf = self.i2cdev.smbus_read_i2c_block_data(BNO055_ACC_ID, 6)?;
@@ -323,6 +335,7 @@ where
         })
     }
 
+    /// Get the system status
     pub fn get_system_status(&mut self, run: bool) -> Result<BNO055SystemStatus, T::Error> {
         let selftest = if run {
             let prev = self.mode;
@@ -350,6 +363,7 @@ where
         })
     }
 
+    /// Get the calibration status
     pub fn get_calibration_status(&mut self) -> Result<BNO055CalibrationStatus, T::Error> {
         let status = self.i2cdev.smbus_read_byte_data(BNO055_CALIB_STAT)?;
         let sys = (status & 0b11000000) >> 6 == 0b11;
@@ -361,6 +375,8 @@ where
     }
 
     // TODO: Make this calibration a struct
+    /// Get the calibration details. Can be used with [set_calibration](fn.set_calibration.html) to
+    /// load previous configs.
     pub fn get_calibration(&mut self) -> Result<Vec<u8>, T::Error> {
         let prev = self.mode;
         let buf = self.i2cdev.smbus_read_i2c_block_data(
@@ -372,6 +388,8 @@ where
     }
 
     // TODO: Use a calibration struct, check for buf length
+    /// Set the calibration details. Can be used with [get_calibration](fn.get_calibration.html) to
+    /// load previous configs.
     pub fn set_calibration(&mut self, buf: Vec<u8>) -> Result<(), T::Error> {
         let prev = self.mode;
         self.i2cdev.smbus_write_block_data(
@@ -384,6 +402,8 @@ where
 
     // TODO: Axis remap
 
+    /// Get euler angle representation of orientation.
+    /// The `x` component is the heading, `y` is the roll, `z` is pitch, all in radians
     pub fn get_euler(&mut self) -> Result<Vec3, T::Error> {
         let buf = self.i2cdev.smbus_read_i2c_block_data(
             BNO055_EUL_HEADING_LSB,
