@@ -4,7 +4,7 @@ extern crate i2csensors;
 
 use byteorder::{ByteOrder, LittleEndian};
 use i2cdev::core::I2CDevice;
-use i2csensors::Vec3;
+use i2csensors::{Accelerometer, Gyroscope, Thermometer, Magnetometer, Vec3};
 
 use std::thread;
 use std::time::Duration;
@@ -399,6 +399,91 @@ where
             y: y * scale,
             z: z * scale,
         })
+    }
+
+    // TODO: linear acceleration, gravity
+}
+
+impl<T> Magnetometer for BNO055<T>
+where
+    T: I2CDevice + Sized,
+{
+    type Error = T::Error;
+
+    fn magnetic_reading(&mut self) -> Result<Vec3, Self::Error> {
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_MAG_DATA_X_LSB,
+            6,
+        )?;
+        let x = LittleEndian::read_i16(&buf[0..2]) as f32;
+        let y = LittleEndian::read_i16(&buf[2..4]) as f32;
+        let z = LittleEndian::read_i16(&buf[4..6]) as f32;
+
+        let scale = 1.0 / 16.0;
+        Ok(Vec3 {
+            x: x * scale,
+            y: y * scale,
+            z: z * scale,
+        })
+    }
+}
+
+impl<T> Gyroscope for BNO055<T>
+where
+    T: I2CDevice + Sized,
+{
+    type Error = T::Error;
+
+    fn angular_rate_reading(&mut self) -> Result<Vec3, Self::Error> {
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_GYR_DATA_X_LSB,
+            6,
+        )?;
+        let x = LittleEndian::read_i16(&buf[0..2]) as f32;
+        let y = LittleEndian::read_i16(&buf[2..4]) as f32;
+        let z = LittleEndian::read_i16(&buf[4..6]) as f32;
+
+        let scale = 1.0 / 900.0;
+        Ok(Vec3 {
+            x: x * scale,
+            y: y * scale,
+            z: z * scale,
+        })
+    }
+}
+
+impl<T> Accelerometer for BNO055<T>
+where
+    T: I2CDevice + Sized,
+{
+    type Error = T::Error;
+
+    fn acceleration_reading(&mut self) -> Result<Vec3, Self::Error> {
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_ACC_DATA_X_LSB,
+            6,
+        )?;
+        let x = LittleEndian::read_i16(&buf[0..2]) as f32;
+        let y = LittleEndian::read_i16(&buf[2..4]) as f32;
+        let z = LittleEndian::read_i16(&buf[4..6]) as f32;
+
+        let scale = 1.0 / 100.0;
+        Ok(Vec3 {
+            x: x * scale,
+            y: y * scale,
+            z: z * scale,
+        })
+    }
+}
+
+impl<T> Thermometer for BNO055<T>
+where
+    T: I2CDevice + Sized,
+{
+    type Error = T::Error;
+
+    fn temperature_celsius(&mut self) -> Result<f32, Self::Error> {
+        Ok(self.i2cdev.smbus_read_byte_data(BNO055_TEMP)? as u8 as f32)
     }
 }
 
