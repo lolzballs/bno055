@@ -4,8 +4,8 @@ extern crate i2csensors;
 
 use byteorder::{ByteOrder, LittleEndian};
 use i2cdev::core::I2CDevice;
+use i2csensors::Vec3;
 
-use std::error::Error;
 use std::thread;
 use std::time::Duration;
 use std::mem;
@@ -169,19 +169,6 @@ pub struct BNO055Revision {
     pub gyroscope: u8,
 }
 
-impl BNO055Revision {
-    pub fn new<E: Error>(i2cdev: &mut I2CDevice<Error = E>) -> Result<BNO055Revision, E> {
-        let buf = i2cdev.smbus_read_i2c_block_data(BNO055_ACC_ID, 6)?;
-        Ok(BNO055Revision {
-            software: LittleEndian::read_u16(&buf[3..5]),
-            bootloader: buf[5],
-            accelerometer: buf[0],
-            magnetometer: buf[1],
-            gyroscope: buf[2],
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct BNO055CalibrationStatus {
     pub sys: bool,
@@ -196,24 +183,6 @@ pub struct BNO055QuaternionReading {
     pub x: f32,
     pub y: f32,
     pub z: f32,
-}
-
-impl BNO055QuaternionReading {
-    pub fn new<E: Error>(i2cdev: &mut I2CDevice<Error = E>) -> Result<BNO055QuaternionReading, E> {
-        let buf = i2cdev.smbus_read_i2c_block_data(BNO055_QUA_DATA_W_LSB, 8)?;
-        let w = LittleEndian::read_i16(&buf[0..2]);
-        let x = LittleEndian::read_i16(&buf[2..4]);
-        let y = LittleEndian::read_i16(&buf[4..6]);
-        let z = LittleEndian::read_i16(&buf[6..8]);
-
-        let scale = 1.0 / ((1 << 14) as f32);
-        Ok(BNO055QuaternionReading {
-            w: w as f32 * scale,
-            x: x as f32 * scale,
-            y: y as f32 * scale,
-            z: z as f32 * scale,
-        })
-    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -324,13 +293,34 @@ where
     }
 
     pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
-        // TODO: Check modes
-        BNO055QuaternionReading::new(&mut self.i2cdev)
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_QUA_DATA_W_LSB,
+            8,
+        )?;
+        let w = LittleEndian::read_i16(&buf[0..2]);
+        let x = LittleEndian::read_i16(&buf[2..4]);
+        let y = LittleEndian::read_i16(&buf[4..6]);
+        let z = LittleEndian::read_i16(&buf[6..8]);
+
+        let scale = 1.0 / ((1 << 14) as f32);
+        Ok(BNO055QuaternionReading {
+            w: w as f32 * scale,
+            x: x as f32 * scale,
+            y: y as f32 * scale,
+            z: z as f32 * scale,
+        })
     }
 
     pub fn get_revision(&mut self) -> Result<BNO055Revision, T::Error> {
         // TODO: Check page
-        BNO055Revision::new(&mut self.i2cdev)
+        let buf = self.i2cdev.smbus_read_i2c_block_data(BNO055_ACC_ID, 6)?;
+        Ok(BNO055Revision {
+            software: LittleEndian::read_u16(&buf[3..5]),
+            bootloader: buf[5],
+            accelerometer: buf[0],
+            magnetometer: buf[1],
+            gyroscope: buf[2],
+        })
     }
 
     pub fn get_system_status(&mut self, run: bool) -> Result<BNO055SystemStatus, T::Error> {
@@ -390,6 +380,25 @@ where
         )?;
         self.set_mode(prev)?;
         Ok(())
+    }
+
+    // TODO: Axis remap
+
+    pub fn get_euler(&mut self) -> Result<Vec3, T::Error> {
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_EUL_HEADING_LSB,
+            6,
+        )?;
+        let x = LittleEndian::read_i16(&buf[0..2]) as f32;
+        let y = LittleEndian::read_i16(&buf[2..4]) as f32;
+        let z = LittleEndian::read_i16(&buf[4..6]) as f32;
+
+        let scale = 1.0 / 900.0;
+        Ok(Vec3 {
+            x: x * scale,
+            y: y * scale,
+            z: z * scale,
+        })
     }
 }
 
