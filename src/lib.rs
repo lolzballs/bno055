@@ -369,6 +369,28 @@ where
 
         Ok(BNO055CalibrationStatus { sys, gyr, acc, mag })
     }
+
+    // TODO: Make this calibration a struct
+    pub fn get_calibration(&mut self) -> Result<Vec<u8>, T::Error> {
+        let prev = self.mode;
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_ACC_OFFSET_X_LSB,
+            22,
+        );
+        self.set_mode(prev)?;
+        return buf;
+    }
+
+    // TODO: Use a calibration struct, check for buf length
+    pub fn set_calibration(&mut self, buf: Vec<u8>) -> Result<(), T::Error> {
+        let prev = self.mode;
+        self.i2cdev.smbus_write_block_data(
+            BNO055_ACC_OFFSET_X_LSB,
+            &buf,
+        )?;
+        self.set_mode(prev)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
