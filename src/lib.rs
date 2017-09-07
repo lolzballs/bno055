@@ -183,6 +183,14 @@ impl BNO055Revision {
 }
 
 #[derive(Debug)]
+pub struct BNO055CalibrationStatus {
+    pub sys: bool,
+    pub gyr: bool,
+    pub acc: bool,
+    pub mag: bool,
+}
+
+#[derive(Debug)]
 pub struct BNO055QuaternionReading {
     pub w: f32,
     pub x: f32,
@@ -350,6 +358,16 @@ where
             error: unsafe { mem::transmute(self.i2cdev.smbus_read_byte_data(BNO055_SYS_ERR)?) },
             selftest,
         })
+    }
+
+    pub fn get_calibration_status(&mut self) -> Result<BNO055CalibrationStatus, T::Error> {
+        let status = self.i2cdev.smbus_read_byte_data(BNO055_CALIB_STAT)?;
+        let sys = (status & 0b11000000) >> 6 == 0b11;
+        let gyr = (status & 0b00110000) >> 6 == 0b11;
+        let acc = (status & 0b00001100) >> 6 == 0b11;
+        let mag = (status & 0b00000011) >> 6 == 0b11;
+
+        Ok(BNO055CalibrationStatus { sys, gyr, acc, mag })
     }
 }
 
