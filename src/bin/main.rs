@@ -26,7 +26,8 @@ fn main() {
             println!("{:?}", bno.get_revision().unwrap());
             bno.set_mode(BNO055OperationMode::Ndof).unwrap();
             loop {
-                println!("{:?}", bno.get_quaternion().unwrap());
+                let accel = bno.get_linear_acceleration().unwrap();
+                println!("{:+2.2}\t{:+2.2}\t{:+2.2}", accel.x, accel.y, accel.z);
             }
         }
         Err(e) => {}

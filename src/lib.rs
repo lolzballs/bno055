@@ -241,7 +241,6 @@ where
         };
         bno.set_mode(BNO055OperationMode::ConfigMode)?;
         bno.set_page(BNO055RegisterPage::Page0)?;
-        bno.reset()?;
         bno.set_power_mode(BNO055PowerMode::Normal)?;
         bno.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x0)?;
 
