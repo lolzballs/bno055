@@ -421,6 +421,23 @@ where
         })
     }
 
+    pub fn get_linear_acceleration(&mut self) -> Result<Vec3, T::Error> {
+        let buf = self.i2cdev.smbus_read_i2c_block_data(
+            BNO055_LIA_DATA_X_LSB,
+            6,
+        )?;
+        let x = LittleEndian::read_i16(&buf[0..2]) as f32;
+        let y = LittleEndian::read_i16(&buf[2..4]) as f32;
+        let z = LittleEndian::read_i16(&buf[4..6]) as f32;
+
+        let scale = 1.0 / 100.0;
+        Ok(Vec3 {
+            x: x * scale,
+            y: y * scale,
+            z: z * scale,
+        })
+    }
+
     // TODO: linear acceleration, gravity
 }
 
