@@ -1,37 +1,48 @@
-extern crate i2cdev_bno055;
-extern crate i2csensors;
-extern crate i2cdev;
+extern crate serial;
+extern crate uart_bno055;
 
-use i2cdev_bno055::*;
+use serial::{BaudRate, CharSize, FlowControl, Parity, PortSettings, SerialPort, StopBits};
+use uart_bno055::*;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use i2cdev::linux::{LinuxI2CDevice, LinuxI2CError};
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn main() {}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn get_linux_bno055_i2c_device() -> Result<LinuxI2CDevice, LinuxI2CError> {
-    match LinuxI2CDevice::new("/dev/i2c-1", BNO055_DEFAULT_ADDR) {
-        Ok(device) => Ok(device),
-        Err(e) => Err(e),
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
 fn main() {
-    match get_linux_bno055_i2c_device() {
-        Ok(device) => {
-            let mut bno = BNO055::new(device).unwrap();
-            println!("{:?}", bno.get_revision().unwrap());
-            bno.set_mode(BNO055OperationMode::Ndof).unwrap();
-            loop {
-                let accel = bno.get_linear_acceleration().unwrap();
-                println!("{:+2.2}\t{:+2.2}\t{:+2.2}", accel.x, accel.y, accel.z);
-            }
-        }
-        Err(e) => {}
+    let mut serial = serial::open("/dev/ttyAMA0").unwrap();
+    serial
+        .configure(&PortSettings {
+            baud_rate: BaudRate::Baud115200,
+            char_size: CharSize::Bits8,
+            parity: Parity::ParityNone,
+            stop_bits: StopBits::Stop1,
+            flow_control: FlowControl::FlowNone,
+        })
+        .unwrap();
+    serial.set_timeout(std::time::Duration::from_secs(5));
+    let mut bno = BNO055::new(serial).unwrap();
+    println!("{:?}", bno.get_revision().unwrap());
+    bno.set_mode(BNO055OperationMode::NdofFmcOff).unwrap();
+    bno.set_page(BNO055RegisterPage::Page0).unwrap();
+    loop {
+        let calib = bno.get_calibration_status().unwrap();
+        eprintln!(
+                    "S:{} G:{} A:{} M:{}",
+                    calib.sys,
+                    calib.gyr,
+                    calib.acc,
+                    calib.mag,
+                );
+
+        let quat = bno.get_quaternion().unwrap();
+        let accel = bno.get_linear_acceleration().unwrap();
+        println!(
+            "{} {} {} {} {} {} {}",
+            quat.w,
+            quat.x,
+            quat.y,
+            quat.z,
+            accel.0,
+            accel.1,
+            accel.2
+        );
+
+        std::thread::sleep_ms(10);
     }
-
-
 }

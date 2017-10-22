@@ -1,11 +1,10 @@
 extern crate byteorder;
-extern crate i2cdev;
-extern crate i2csensors;
+extern crate serial;
 
 use byteorder::{ByteOrder, LittleEndian};
-use i2cdev::core::I2CDevice;
-use i2csensors::{Accelerometer, Gyroscope, Thermometer, Magnetometer, Vec3};
+use serial::SerialPort;
 
+use std::io;
 use std::thread;
 use std::time::Duration;
 use std::mem;
@@ -171,10 +170,10 @@ pub struct BNO055Revision {
 
 #[derive(Debug)]
 pub struct BNO055CalibrationStatus {
-    pub sys: bool,
-    pub gyr: bool,
-    pub acc: bool,
-    pub mag: bool,
+    pub sys: u8,
+    pub gyr: u8,
+    pub acc: u8,
+    pub mag: u8,
 }
 
 #[derive(Debug)]
@@ -219,48 +218,51 @@ pub enum BNO055OperationMode {
 }
 
 #[derive(Copy, Clone)]
-pub struct BNO055<T: I2CDevice + Sized> {
-    pub i2cdev: T,
+pub struct BNO055<T: SerialPort + Sized> {
+    pub port: T,
     pub mode: BNO055OperationMode,
 }
 
 impl<T> BNO055<T>
 where
-    T: I2CDevice + Sized,
+    T: SerialPort + Sized,
 {
-    pub fn new(mut i2cdev: T) -> Result<Self, T::Error> {
-        let chip_id = i2cdev.smbus_read_byte_data(BNO055_CHIP_ID)?;
+    pub fn new(port: T) -> Result<Self, io::Error> {
+        let mut bno = BNO055 {
+            port,
+            mode: BNO055OperationMode::ConfigMode,
+        };
+        let chip_id = bno.read_reg(BNO055_CHIP_ID)?;
+        println!("{}", chip_id);
         if chip_id != BNO055_ID {
             // TODO: Do correct error handling
             panic!("BNO055_CHIP_ID was not valid!");
         }
+        bno.reset()?;
 
-        let mut bno = BNO055 {
-            i2cdev: i2cdev,
-            mode: BNO055OperationMode::ConfigMode,
-        };
+        thread::sleep(Duration::from_millis(1000));
+
         bno.set_mode(BNO055OperationMode::ConfigMode)?;
         bno.set_page(BNO055RegisterPage::Page0)?;
         bno.set_power_mode(BNO055PowerMode::Normal)?;
-        bno.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x0)?;
 
         Ok(bno)
     }
 
     /// Reset the BNO055, initializing the register map to default values
     /// More in section 3.2
-    pub fn reset(&mut self) -> Result<(), T::Error> {
-        Ok(self.i2cdev.smbus_write_byte_data(BNO055_SYS_TRIGGER, 0x20)?)
+    pub fn reset(&mut self) -> Result<(), io::Error> {
+        let buf = [0xAA, 0x00, BNO055_SYS_TRIGGER, 1, 0x20];
+        self.port.write_all(&buf)?;
+        self.port.read_exact(&mut [0])?;
+        Ok(())
     }
 
     /// Sets the operating mode, see [BNO055OperationMode](enum.BNO055OperationMode.html)
     /// More in section 3.3
-    pub fn set_mode(&mut self, mode: BNO055OperationMode) -> Result<(), T::Error> {
+    pub fn set_mode(&mut self, mode: BNO055OperationMode) -> Result<(), io::Error> {
         if self.mode != mode {
-            self.i2cdev.smbus_write_byte_data(
-                BNO055_OPR_MODE,
-                mode as u8,
-            )?;
+            self.write_reg(BNO055_OPR_MODE, mode as u8)?;
 
             // Table 3-6 says 19ms to switch to CONFIG_MODE
             thread::sleep(Duration::from_millis(19));
@@ -268,10 +270,10 @@ where
         Ok(())
     }
 
-    pub fn set_external_crystal(&mut self, ext: bool) -> Result<(), T::Error> {
+    pub fn set_external_crystal(&mut self, ext: bool) -> Result<(), io::Error> {
         let prev = self.mode;
         self.set_mode(BNO055OperationMode::ConfigMode)?;
-        self.i2cdev.smbus_write_byte_data(
+        self.write_reg(
             BNO055_SYS_TRIGGER,
             if ext { 0x80 } else { 0x00 },
         )?;
@@ -281,31 +283,23 @@ where
 
     /// Sets the power mode, see [BNO055PowerMode](enum.BNO055PowerMode.html)
     /// More in section 3.2
-    pub fn set_power_mode(&mut self, mode: BNO055PowerMode) -> Result<(), T::Error> {
-        self.i2cdev.smbus_write_byte_data(
-            BNO055_PWR_MODE,
-            mode as u8,
-        )?;
+    pub fn set_power_mode(&mut self, mode: BNO055PowerMode) -> Result<(), io::Error> {
+        self.write_reg(BNO055_PWR_MODE, mode as u8)?;
         Ok(())
     }
 
     /// Sets the register page
     /// More in section 4.2
-    pub fn set_page(&mut self, page: BNO055RegisterPage) -> Result<(), T::Error> {
-        self.i2cdev.smbus_write_byte_data(
-            BNO055_PAGE_ID,
-            page as u8,
-        )?;
+    pub fn set_page(&mut self, page: BNO055RegisterPage) -> Result<(), io::Error> {
+        self.write_reg(BNO055_PAGE_ID, page as u8)?;
         Ok(())
     }
 
     /// Gets a quaternion reading from the BNO055
     /// Must be in a valid operating mode
-    pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, T::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_QUA_DATA_W_LSB,
-            8,
-        )?;
+    pub fn get_quaternion(&mut self) -> Result<BNO055QuaternionReading, io::Error> {
+        let mut buf = [0u8; 8];
+        self.read_reg_multiple(BNO055_QUA_DATA_W_LSB, &mut buf)?;
         let w = LittleEndian::read_i16(&buf[0..2]);
         let x = LittleEndian::read_i16(&buf[2..4]);
         let y = LittleEndian::read_i16(&buf[4..6]);
@@ -322,9 +316,10 @@ where
 
     /// Gets the revision of software, bootloader, accelerometer, magnetometer, and gyroscope of
     /// the BNO055
-    pub fn get_revision(&mut self) -> Result<BNO055Revision, T::Error> {
+    pub fn get_revision(&mut self) -> Result<BNO055Revision, io::Error> {
         // TODO: Check page
-        let buf = self.i2cdev.smbus_read_i2c_block_data(BNO055_ACC_ID, 6)?;
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_ACC_ID, &mut buf)?;
         Ok(BNO055Revision {
             software: LittleEndian::read_u16(&buf[3..5]),
             bootloader: buf[5],
@@ -335,20 +330,17 @@ where
     }
 
     /// Get the system status
-    pub fn get_system_status(&mut self, run: bool) -> Result<BNO055SystemStatus, T::Error> {
+    pub fn get_system_status(&mut self, run: bool) -> Result<BNO055SystemStatus, io::Error> {
         let selftest = if run {
             let prev = self.mode;
             self.set_mode(BNO055OperationMode::ConfigMode)?;
 
-            let sys_trigger = self.i2cdev.smbus_read_byte_data(BNO055_SYS_TRIGGER)?;
-            self.i2cdev.smbus_write_byte_data(
-                BNO055_SYS_TRIGGER,
-                sys_trigger | 0x1,
-            )?;
+            let sys_trigger = self.read_reg(BNO055_SYS_TRIGGER)?;
+            self.write_reg(BNO055_SYS_TRIGGER, sys_trigger | 0x1)?;
 
             thread::sleep(Duration::from_secs(1));
 
-            let result = self.i2cdev.smbus_read_byte_data(BNO055_ST_RESULT)?;
+            let result = self.read_reg(BNO055_ST_RESULT)?;
             self.set_mode(prev)?;
             Some(result)
         } else {
@@ -356,19 +348,19 @@ where
         };
 
         Ok(BNO055SystemStatus {
-            status: unsafe { mem::transmute(self.i2cdev.smbus_read_byte_data(BNO055_SYS_STATUS)?) },
-            error: unsafe { mem::transmute(self.i2cdev.smbus_read_byte_data(BNO055_SYS_ERR)?) },
+            status: unsafe { mem::transmute(self.read_reg(BNO055_SYS_STATUS)?) },
+            error: unsafe { mem::transmute(self.read_reg(BNO055_SYS_ERR)?) },
             selftest,
         })
     }
 
     /// Get the calibration status
-    pub fn get_calibration_status(&mut self) -> Result<BNO055CalibrationStatus, T::Error> {
-        let status = self.i2cdev.smbus_read_byte_data(BNO055_CALIB_STAT)?;
-        let sys = (status & 0b11000000) >> 6 == 0b11;
-        let gyr = (status & 0b00110000) >> 6 == 0b11;
-        let acc = (status & 0b00001100) >> 6 == 0b11;
-        let mag = (status & 0b00000011) >> 6 == 0b11;
+    pub fn get_calibration_status(&mut self) -> Result<BNO055CalibrationStatus, io::Error> {
+        let status = self.read_reg(BNO055_CALIB_STAT)?;
+        let sys = (status & 0b11000000) >> 6;
+        let gyr = (status & 0b00110000) >> 4;
+        let acc = (status & 0b00001100) >> 2;
+        let mag = (status & 0b00000011);
 
         Ok(BNO055CalibrationStatus { sys, gyr, acc, mag })
     }
@@ -376,25 +368,20 @@ where
     // TODO: Make this calibration a struct
     /// Get the calibration details. Can be used with [set_calibration](fn.set_calibration.html) to
     /// load previous configs.
-    pub fn get_calibration(&mut self) -> Result<Vec<u8>, T::Error> {
+    pub fn get_calibration(&mut self) -> Result<Vec<u8>, io::Error> {
         let prev = self.mode;
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_ACC_OFFSET_X_LSB,
-            22,
-        );
+        let mut buf = Vec::with_capacity(22);
+        self.read_reg_multiple(BNO055_ACC_OFFSET_X_LSB, &mut buf)?;
         self.set_mode(prev)?;
-        return buf;
+        Ok(buf)
     }
 
     // TODO: Use a calibration struct, check for buf length
     /// Set the calibration details. Can be used with [get_calibration](fn.get_calibration.html) to
     /// load previous configs.
-    pub fn set_calibration(&mut self, buf: Vec<u8>) -> Result<(), T::Error> {
+    pub fn set_calibration(&mut self, buf: Vec<u8>) -> Result<(), io::Error> {
         let prev = self.mode;
-        self.i2cdev.smbus_write_block_data(
-            BNO055_ACC_OFFSET_X_LSB,
-            &buf,
-        )?;
+        self.write_reg_multiple(BNO055_ACC_OFFSET_X_LSB, &buf)?;
         self.set_mode(prev)?;
         Ok(())
     }
@@ -403,123 +390,107 @@ where
 
     /// Get euler angle representation of orientation.
     /// The `x` component is the heading, `y` is the roll, `z` is pitch, all in radians
-    pub fn get_euler(&mut self) -> Result<Vec3, T::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_EUL_HEADING_LSB,
-            6,
-        )?;
+    pub fn get_euler(&mut self) -> Result<(f32, f32, f32), io::Error> {
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_EUL_HEADING_LSB, &mut buf)?;
         let x = LittleEndian::read_i16(&buf[0..2]) as f32;
         let y = LittleEndian::read_i16(&buf[2..4]) as f32;
         let z = LittleEndian::read_i16(&buf[4..6]) as f32;
 
         let scale = 1.0 / 900.0;
-        Ok(Vec3 {
-            x: x * scale,
-            y: y * scale,
-            z: z * scale,
-        })
+        Ok((x * scale, y * scale, z * scale))
     }
 
-    pub fn get_linear_acceleration(&mut self) -> Result<Vec3, T::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_LIA_DATA_X_LSB,
-            6,
-        )?;
+    pub fn get_linear_acceleration(&mut self) -> Result<(f32, f32, f32), io::Error> {
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_LIA_DATA_X_LSB, &mut buf)?;
         let x = LittleEndian::read_i16(&buf[0..2]) as f32;
         let y = LittleEndian::read_i16(&buf[2..4]) as f32;
         let z = LittleEndian::read_i16(&buf[4..6]) as f32;
 
         let scale = 1.0 / 100.0;
-        Ok(Vec3 {
-            x: x * scale,
-            y: y * scale,
-            z: z * scale,
-        })
+        Ok((x * scale, y * scale, z * scale))
     }
 
-    // TODO: linear acceleration, gravity
-}
-
-impl<T> Magnetometer for BNO055<T>
-where
-    T: I2CDevice + Sized,
-{
-    type Error = T::Error;
-
-    fn magnetic_reading(&mut self) -> Result<Vec3, Self::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_MAG_DATA_X_LSB,
-            6,
-        )?;
+    pub fn get_magnetic_field(&mut self) -> Result<(f32, f32, f32), io::Error> {
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_MAG_DATA_X_LSB, &mut buf)?;
         let x = LittleEndian::read_i16(&buf[0..2]) as f32;
         let y = LittleEndian::read_i16(&buf[2..4]) as f32;
         let z = LittleEndian::read_i16(&buf[4..6]) as f32;
 
         let scale = 1.0 / 16.0;
-        Ok(Vec3 {
-            x: x * scale,
-            y: y * scale,
-            z: z * scale,
-        })
+        Ok((x * scale, y * scale, z * scale))
     }
-}
 
-impl<T> Gyroscope for BNO055<T>
-where
-    T: I2CDevice + Sized,
-{
-    type Error = T::Error;
-
-    fn angular_rate_reading(&mut self) -> Result<Vec3, Self::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_GYR_DATA_X_LSB,
-            6,
-        )?;
+    pub fn get_angular_rate(&mut self) -> Result<(f32, f32, f32), io::Error> {
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_GYR_DATA_X_LSB, &mut buf)?;
         let x = LittleEndian::read_i16(&buf[0..2]) as f32;
         let y = LittleEndian::read_i16(&buf[2..4]) as f32;
         let z = LittleEndian::read_i16(&buf[4..6]) as f32;
 
         let scale = 1.0 / 900.0;
-        Ok(Vec3 {
-            x: x * scale,
-            y: y * scale,
-            z: z * scale,
-        })
+        Ok((x * scale, y * scale, z * scale))
     }
-}
 
-impl<T> Accelerometer for BNO055<T>
-where
-    T: I2CDevice + Sized,
-{
-    type Error = T::Error;
-
-    fn acceleration_reading(&mut self) -> Result<Vec3, Self::Error> {
-        let buf = self.i2cdev.smbus_read_i2c_block_data(
-            BNO055_ACC_DATA_X_LSB,
-            6,
-        )?;
+    pub fn get_acceleration(&mut self) -> Result<(f32, f32, f32), io::Error> {
+        let mut buf = [0u8; 6];
+        self.read_reg_multiple(BNO055_ACC_DATA_X_LSB, &mut buf)?;
         let x = LittleEndian::read_i16(&buf[0..2]) as f32;
         let y = LittleEndian::read_i16(&buf[2..4]) as f32;
         let z = LittleEndian::read_i16(&buf[4..6]) as f32;
 
         let scale = 1.0 / 100.0;
-        Ok(Vec3 {
-            x: x * scale,
-            y: y * scale,
-            z: z * scale,
-        })
+        Ok((x * scale, y * scale, z * scale))
     }
-}
 
-impl<T> Thermometer for BNO055<T>
-where
-    T: I2CDevice + Sized,
-{
-    type Error = T::Error;
+    pub fn get_temperature_celcius(&mut self) -> Result<f32, io::Error> {
+        Ok(self.read_reg(BNO055_TEMP)? as u8 as f32)
+    }
 
-    fn temperature_celsius(&mut self) -> Result<f32, Self::Error> {
-        Ok(self.i2cdev.smbus_read_byte_data(BNO055_TEMP)? as u8 as f32)
+    fn read_reg(&mut self, reg: u8) -> Result<u8, io::Error> {
+        let mut v = [0];
+        self.read_reg_multiple(reg, &mut v)?;
+        Ok(v[0])
+    }
+
+    fn read_reg_multiple(&mut self, start: u8, values: &mut [u8]) -> Result<(), io::Error> {
+        let buf = [0xAA, 0x01, start, values.len() as u8];
+        self.port.write_all(&buf)?;
+        let mut ack = [0u8; 2];
+        self.port.read_exact(&mut ack)?;
+        match ack[0] {
+            0xBB => self.port.read_exact(values)?,
+            0xEE => {
+                if ack[1] == 0x07 {
+                    return self.read_reg_multiple(start, values);
+                } else {
+                    panic!("Unknown status: {}", ack[1]);
+                }
+            }
+            _ => panic!("not supposed to happen"),
+        }
+        Ok(())
+    }
+
+    fn write_reg(&mut self, reg: u8, value: u8) -> Result<(), io::Error> {
+        let values = [value];
+        self.write_reg_multiple(reg, &values)?;
+        Ok(())
+    }
+
+    fn write_reg_multiple(&mut self, reg: u8, values: &[u8]) -> Result<(), io::Error> {
+        let mut buf = [0xAA, 0x00, reg, values.len() as u8];
+        self.port.write_all(&buf)?;
+        self.port.write_all(&values)?;
+        self.port.read_exact(&mut buf[..2])?;
+
+        match buf[1] {
+            0x01 => Ok(()),
+            0x07 => self.write_reg_multiple(reg, values),
+            _ => panic!("Unknown status: {}", buf[1]),
+        }
     }
 }
 
